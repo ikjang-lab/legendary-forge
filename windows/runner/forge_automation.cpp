@@ -135,59 +135,95 @@ bool ForgeAutomation::TrySendCommand() {
 }
 
 bool ForgeAutomation::SendViaFocusAndInput(HWND kakaoHwnd) {
-    // 클립보드에 "/강화" 설정 (유니코드 이스케이프 사용: 강=U+AC15, 화=U+D654)
-    if (!OpenClipboard(nullptr)) return false;
-    EmptyClipboard();
+    // ── 1단계: 클립보드에 "/강화" 설정 ─────────────────────────────────────
     const wchar_t* text = L"/\uAC15\uD654";
     size_t bytes = (wcslen(text) + 1) * sizeof(wchar_t);
-    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
-    if (!hMem) { CloseClipboard(); return false; }
-    memcpy(GlobalLock(hMem), text, bytes);
-    GlobalUnlock(hMem);
-    SetClipboardData(CF_UNICODETEXT, hMem);
-    CloseClipboard();
+    if (OpenClipboard(nullptr)) {
+        EmptyClipboard();
+        HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
+        if (hMem) {
+            memcpy(GlobalLock(hMem), text, bytes);
+            GlobalUnlock(hMem);
+            SetClipboardData(CF_UNICODETEXT, hMem);
+        }
+        CloseClipboard();
+    }
 
-    // 카카오톡 창을 포그라운드로 전환
+    // ── 2단계: AttachThreadInput으로 포그라운드 전환 (SetForegroundWindow 제한 우회) ──
+    HWND fgHwnd = GetForegroundWindow();
+    DWORD fgThread = fgHwnd ? GetWindowThreadProcessId(fgHwnd, nullptr) : 0;
+    DWORD myThread = GetCurrentThreadId();
+    if (fgThread && fgThread != myThread) {
+        AttachThreadInput(fgThread, myThread, TRUE);
+    }
+    ShowWindow(kakaoHwnd, SW_RESTORE);
     SetForegroundWindow(kakaoHwnd);
-    Sleep(200);
+    BringWindowToTop(kakaoHwnd);
+    if (fgThread && fgThread != myThread) {
+        AttachThreadInput(fgThread, myThread, FALSE);
+    }
+    Sleep(400);
 
-    // 카카오톡 채팅창 하단 입력 영역 클릭 (포커스 확보)
+    // ── 3단계: 카카오톡 창이 실제 포그라운드인지 확인 ────────────────────
+    if (GetForegroundWindow() != kakaoHwnd) {
+        // 포그라운드 전환 실패 시 WM_CHAR로 직접 전송 시도
+        for (int i = 0; text[i] != L'\0'; i++) {
+            PostMessage(kakaoHwnd, WM_CHAR, (WPARAM)text[i], 1);
+            Sleep(20);
+        }
+        Sleep(100);
+        PostMessage(kakaoHwnd, WM_KEYDOWN, VK_RETURN, 0x001C0001);
+        Sleep(50);
+        PostMessage(kakaoHwnd, WM_KEYUP, VK_RETURN, 0xC01C0001);
+        return true;
+    }
+
+    // ── 4단계: 입력창 영역 클릭으로 포커스 확보 ──────────────────────────
     RECT rect;
-    GetWindowRect(kakaoHwnd, &rect);
-    int clickX = (rect.left + rect.right) / 2;
-    int clickY = rect.bottom - 35;
+    GetClientRect(kakaoHwnd, &rect);
+    POINT pt;
+    pt.x = (rect.left + rect.right) / 2;
+    pt.y = rect.bottom - 40;
+    ClientToScreen(kakaoHwnd, &pt);
+
+    int screenW = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+    int screenH = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+    int screenX = GetSystemMetrics(SM_XVIRTUALSCREEN);
+    int screenY = GetSystemMetrics(SM_YVIRTUALSCREEN);
+    DWORD absX = (DWORD)((pt.x - screenX) * 65535 / (screenW - 1));
+    DWORD absY = (DWORD)((pt.y - screenY) * 65535 / (screenH - 1));
 
     INPUT mouseClick[3] = {};
     mouseClick[0].type = INPUT_MOUSE;
-    mouseClick[0].mi.dx = clickX * 65536 / GetSystemMetrics(SM_CXSCREEN);
-    mouseClick[0].mi.dy = clickY * 65536 / GetSystemMetrics(SM_CYSCREEN);
-    mouseClick[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE;
+    mouseClick[0].mi.dx = absX;
+    mouseClick[0].mi.dy = absY;
+    mouseClick[0].mi.dwFlags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_MOVE | MOUSEEVENTF_VIRTUALDESK;
     mouseClick[1].type = INPUT_MOUSE;
     mouseClick[1].mi.dwFlags = MOUSEEVENTF_LEFTDOWN;
     mouseClick[2].type = INPUT_MOUSE;
     mouseClick[2].mi.dwFlags = MOUSEEVENTF_LEFTUP;
     SendInput(3, mouseClick, sizeof(INPUT));
-    Sleep(100);
+    Sleep(150);
 
-    // Ctrl+A → 기존 입력 전체 선택 후 삭제 준비
+    // ── 5단계: Ctrl+A → 기존 텍스트 지우기 ──────────────────────────────
     INPUT selAll[4] = {};
     selAll[0].type = INPUT_KEYBOARD; selAll[0].ki.wVk = VK_CONTROL;
     selAll[1].type = INPUT_KEYBOARD; selAll[1].ki.wVk = 'A';
-    selAll[2].type = INPUT_KEYBOARD; selAll[2].ki.wVk = 'A';  selAll[2].ki.dwFlags = KEYEVENTF_KEYUP;
+    selAll[2].type = INPUT_KEYBOARD; selAll[2].ki.wVk = 'A'; selAll[2].ki.dwFlags = KEYEVENTF_KEYUP;
     selAll[3].type = INPUT_KEYBOARD; selAll[3].ki.wVk = VK_CONTROL; selAll[3].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(4, selAll, sizeof(INPUT));
     Sleep(50);
 
-    // Ctrl+V → 붙여넣기
+    // ── 6단계: Ctrl+V → 붙여넣기 ────────────────────────────────────────
     INPUT paste[4] = {};
     paste[0].type = INPUT_KEYBOARD; paste[0].ki.wVk = VK_CONTROL;
     paste[1].type = INPUT_KEYBOARD; paste[1].ki.wVk = 'V';
     paste[2].type = INPUT_KEYBOARD; paste[2].ki.wVk = 'V'; paste[2].ki.dwFlags = KEYEVENTF_KEYUP;
     paste[3].type = INPUT_KEYBOARD; paste[3].ki.wVk = VK_CONTROL; paste[3].ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(4, paste, sizeof(INPUT));
-    Sleep(100);
+    Sleep(150);
 
-    // Enter → 전송
+    // ── 7단계: Enter → 전송 ──────────────────────────────────────────────
     INPUT enter[2] = {};
     enter[0].type = INPUT_KEYBOARD; enter[0].ki.wVk = VK_RETURN;
     enter[1].type = INPUT_KEYBOARD; enter[1].ki.wVk = VK_RETURN; enter[1].ki.dwFlags = KEYEVENTF_KEYUP;
@@ -201,7 +237,7 @@ bool ForgeAutomation::PollForResponse() {
     ULONGLONG start = GetTickCount64();
 
     while (!shouldStop_.load() && isRunning.load()) {
-        if (GetTickCount64() - start > 7000) {
+        if (GetTickCount64() - start > 10000) {
             PostStatusToMain("응답 없음 - 재시도", "#FFAA00");
             SleepInterruptible(1500);
             return false;
@@ -392,11 +428,46 @@ void ForgeAutomation::CollectTexts(IUIAutomationElement* elem,
                                     std::vector<std::wstring>& out) {
     if (!elem) return;
 
+    auto addIfNew = [&](const std::wstring& s) {
+        if (s.size() > 2) out.push_back(s);
+    };
+
+    // 1) Name 속성
     BSTR name = nullptr;
     if (SUCCEEDED(elem->get_CurrentName(&name)) && name) {
-        std::wstring s(name);
+        addIfNew(std::wstring(name));
         SysFreeString(name);
-        if (s.size() > 4) out.push_back(s);
+    }
+
+    // 2) Value 속성 (IValuePattern)
+    {
+        VARIANT v = {}; v.vt = VT_EMPTY;
+        if (SUCCEEDED(elem->GetCurrentPropertyValue(UIA_ValueValuePropertyId, &v))
+            && v.vt == VT_BSTR && v.bstrVal) {
+            addIfNew(std::wstring(v.bstrVal));
+        }
+        VariantClear(&v);
+    }
+
+    // 3) TextPattern (채팅 메시지 리스트 등)
+    {
+        IUnknown* pUnk = nullptr;
+        if (SUCCEEDED(elem->GetCurrentPattern(UIA_TextPatternId, &pUnk)) && pUnk) {
+            IUIAutomationTextPattern* tp = nullptr;
+            if (SUCCEEDED(pUnk->QueryInterface(IID_PPV_ARGS(&tp)))) {
+                IUIAutomationTextRange* range = nullptr;
+                if (SUCCEEDED(tp->get_DocumentRange(&range)) && range) {
+                    BSTR txt = nullptr;
+                    if (SUCCEEDED(range->GetText(4096, &txt)) && txt) {
+                        addIfNew(std::wstring(txt));
+                        SysFreeString(txt);
+                    }
+                    range->Release();
+                }
+                tp->Release();
+            }
+            pUnk->Release();
+        }
     }
 
     // 자식 요소 순회
