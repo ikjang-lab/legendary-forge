@@ -87,7 +87,7 @@ bool ForgeAutomation::TrySendCommand() {
         // UI Automation으로 입력창을 찾은 경우: IValuePattern으로 텍스트 설정
         IValueProvider* pValue = nullptr;
         if (SUCCEEDED(inputElem->GetCurrentPattern(UIA_ValuePatternId, (IUnknown**)&pValue)) && pValue) {
-            pValue->SetValue(L"/강화");
+            pValue->SetValue(L"/\uAC15\uD654");
             pValue->Release();
         }
         Sleep(250);
@@ -135,10 +135,10 @@ bool ForgeAutomation::TrySendCommand() {
 }
 
 bool ForgeAutomation::SendViaFocusAndInput(HWND kakaoHwnd) {
-    // 클립보드에 "/강화" 설정
+    // 클립보드에 "/강화" 설정 (유니코드 이스케이프 사용: 강=U+AC15, 화=U+D654)
     if (!OpenClipboard(nullptr)) return false;
     EmptyClipboard();
-    const wchar_t* text = L"/강화";
+    const wchar_t* text = L"/\uAC15\uD654";
     size_t bytes = (wcslen(text) + 1) * sizeof(wchar_t);
     HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, bytes);
     if (!hMem) { CloseClipboard(); return false; }
