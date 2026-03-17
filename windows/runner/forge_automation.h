@@ -48,6 +48,7 @@ class ForgeAutomation {
 
     void RunLoop();
     bool TrySendCommand();
+    bool SendViaFocusAndInput(HWND kakaoHwnd);
     bool PollForResponse();
     void HandleBotMessage(const std::wstring& text);
 
