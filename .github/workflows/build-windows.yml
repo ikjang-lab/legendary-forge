@@ -1,0 +1,40 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # 수동 실행 버튼도 활성화
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: Flutter 설치
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.0'
+          channel: 'stable'
+          cache: true
+
+      - name: 의존성 설치
+        run: flutter pub get
+
+      - name: Windows 릴리즈 빌드
+        run: flutter build windows --release
+
+      - name: 빌드 결과물 압축
+        run: |
+          Compress-Archive `
+            -Path "build\windows\x64\runner\Release\*" `
+            -DestinationPath "legendary_forge_windows.zip"
+
+      - name: 아티팩트 업로드 (다운로드용)
+        uses: actions/upload-artifact@v4
+        with:
+          name: legendary_forge_windows
+          path: legendary_forge_windows.zip
+          retention-days: 30
