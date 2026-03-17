@@ -16,7 +16,6 @@ jobs:
       - name: Flutter 설치
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.32.0'
           channel: 'stable'
           cache: true
 
